@@ -2,7 +2,7 @@ import math
 
 import pygui_cython as pygui
 from shapes import *
-from r_shape import Camera2D, Rect2D, Circle2D, Camera3D, Triangle3D, Line3D, Cube3D
+from r_shape import Camera2D, Rect2D, Circle2D, Camera3D, Triangle3D, Line3D, Cube3D, Polygon3D
 
 
 import numpy as np
@@ -28,6 +28,7 @@ class Game:
         self.line_3d_x = Line3D(np.array([0, 0, 0]), np.array([[0, 0, 0], [50, 0,  0]]))
         self.line_3d_y = Line3D(np.array([0, 0, 0]), np.array([[0, 0, 0], [0,  50, 0]]))
         self.line_3d_z = Line3D(np.array([0, 0, 0]), np.array([[0, 0, 0], [0,  0,  50]]))
+        self.has_mouse_capture = False
 
     def _push_game_window(self):
         """All this function does is give us the drawing 'Sandbox' we see in the
@@ -134,7 +135,7 @@ class Game:
                 self.camera.set_scale(1)
 
             left_right = int(pygui.is_key_down(pygui.KEY_D)) - int(pygui.is_key_down(pygui.KEY_A))
-            up_down = int(pygui.is_key_down(pygui.KEY_S)) - int(pygui.is_key_down(pygui.KEY_W))
+            up_down = int(pygui.is_key_down(pygui.KEY_LEFT_CTRL)) - int(pygui.is_key_down(pygui.KEY_SPACE))
             self.camera.set_position(np.array(self.camera.get_position() + np.array([left_right, up_down])))
 
             self.camera.update_matrices(np.array(self.sandbox_size.tuple()))
@@ -169,7 +170,18 @@ class Game:
             # --------------------------------------------------------------------------------------------
             # 3D
             # --------------------------------------------------------------------------------------------
-            in_out = int(pygui.is_key_down(pygui.KEY_Q)) - int(pygui.is_key_down(pygui.KEY_E))
+            if pygui.is_mouse_clicked(pygui.MOUSE_BUTTON_RIGHT) and pygui.is_window_hovered():
+                self.has_mouse_capture = not self.has_mouse_capture
+
+            if self.has_mouse_capture:
+                pygui.set_mouse_cursor(pygui.MOUSE_CURSOR_NONE)
+                yaw, pitch = self.camera_3d.get_rotation_degrees()
+                yaw += pygui.get_io().mouse_delta[0]
+                pitch += pygui.get_io().mouse_delta[1]
+                self.camera_3d.set_rotation_degrees(yaw, pitch)
+
+
+            in_out = int(pygui.is_key_down(pygui.KEY_W)) - int(pygui.is_key_down(pygui.KEY_S))
             fov_edit = int(pygui.is_key_down(pygui.KEY_1)) - int(pygui.is_key_down(pygui.KEY_2))
 
             camera_3d_position = self.camera_3d.get_position()
@@ -181,12 +193,13 @@ class Game:
 
 
             # 3D Stuff
-            self.camera_3d.update_matrices()
+            self.camera_3d.update_matrices(np.array(self.sandbox_size.tuple()))
             c3 = self.camera_3d.get_camera_matrix_4_4()
-            triangle_points = self.triangle_3d.convert_to_screen_coordinates(c3)
-            draw_list.add_convex_poly_filled(np.array(list(origin) + [0]) + triangle_points, pygui.Vec4(0, 1, 0, 1).to_u32())
+            # triangle_screen_coords = self.triangle_3d.get_vtx_screen_coords(c3)
+            # draw_list.add_convex_poly_filled(np.array(list(origin) + [0]) + triangle_screen_coords, pygui.Vec4(0, 1, 0, 1).to_u32())
 
-            cube_points = self.cube_3d.convert_to_screen_coordinates(c3)
+            cube_screen_coords = self.cube_3d.get_vtx_screen_coords(c3, self.camera_3d.get_near_plane())
+            cube_world_coords = self.cube_3d.get_vtx_world_coords()
 
             
             def map_from_top_corner_to_screen(x, y):
@@ -199,43 +212,156 @@ class Game:
                     (1 - x) * self.sandbox_size.x / 2,
                     (1 - y) * self.sandbox_size.y / 2
                 ])
+        
+            def squared_dist(point_a_3: np.ndarray, point_b_3: np.ndarray):
+                return sum((px - qx) ** 2.0 for px, qx in zip(point_a_3, point_b_3))
+        
+            def get_average_position_of_triangle(triangle_3_3: np.ndarray):
+                a_3, b_3, c_3 = triangle_3_3
+                return np.array([
+                    (a_3[0] + b_3[0] + c_3[0]) / 3,
+                    (a_3[1] + b_3[1] + c_3[1]) / 3,
+                    (a_3[2] + b_3[2] + c_3[2]) / 3,
+                ])
 
-            for i in range(0, len(cube_points), 3):
-                draw_list.add_triangle(
-                    origin + map_from_top_corner_to_screen(cube_points[i][0],   cube_points[i][1]),
-                    origin + map_from_top_corner_to_screen(cube_points[i+1][0], cube_points[i+1][1]),
-                    origin + map_from_top_corner_to_screen(cube_points[i+2][0], cube_points[i+2][1]),
-                    pygui.Vec4(
-                        ((i * 50)  % 255) / 255,
-                        ((i * 100) % 255) / 255,
-                        ((i * 25)  % 255) / 255,
-                        1
-                    ).to_u32()
-                )
+            cube_screen_coords_triangles_3_n_3 = Polygon3D.group_into_triangles(cube_screen_coords)
+            cube_world_coords_triangles_3_n_3 = Polygon3D.group_into_triangles(cube_world_coords)
+
+            def distance_from_triangle_to_camera(triangle_world_coords_3_3: np.ndarray, camera_world_coord_3: np.ndarray):
+                triangle_world_coords_3 = get_average_position_of_triangle(triangle_world_coords_3_3)
+                squared_distance_to_camera = squared_dist(triangle_world_coords_3, camera_world_coord_3)
+                return squared_distance_to_camera
             
-            start, end = self.line_3d_x.convert_to_screen_coordinates(self.camera_3d.get_camera_matrix_4_4())
-            draw_list.add_line(
-                origin + map_from_top_corner_to_screen(start[0], start[1]),
-                origin + map_from_top_corner_to_screen(end[0], end[1]),
-                pygui.Vec4(1, 0, 0, 1).to_u32(),
-                thickness=5,
+            def sort_triangles_by_distance_to_camera(
+                    triangle_screen_coords_3_3: np.ndarray,
+                    triangle_world_coords_3_3: np.ndarray,
+                    camera_world_coords_3: np.ndarray
+                ):
+                combined = [(sc_3, wc_3) for sc_3, wc_3 in zip(triangle_screen_coords_3_3, triangle_world_coords_3_3)]
+                combined.sort(key=lambda x: -distance_from_triangle_to_camera(x[1], camera_world_coords_3))
+                return combined
+
+
+            ordered_triangles = sort_triangles_by_distance_to_camera(
+                cube_screen_coords_triangles_3_n_3,
+                cube_world_coords_triangles_3_n_3,
+                self.camera_3d.get_position()
             )
 
-            start, end = self.line_3d_y.convert_to_screen_coordinates(self.camera_3d.get_camera_matrix_4_4())
-            draw_list.add_line(
-                origin + map_from_top_corner_to_screen(start[0], start[1]),
-                origin + map_from_top_corner_to_screen(end[0], end[1]),
-                pygui.Vec4(0, 1, 0, 1).to_u32(),
-                thickness=5,
-            )
 
-            start, end = self.line_3d_z.convert_to_screen_coordinates(self.camera_3d.get_camera_matrix_4_4())
-            draw_list.add_line(
-                origin + map_from_top_corner_to_screen(start[0], start[1]),
-                origin + map_from_top_corner_to_screen(end[0], end[1]),
-                pygui.Vec4(0, 0, 1, 1).to_u32(),
-                thickness=5,
-            )
+            for i, (triangle_sc_3_3, triangle_wc_3_3) in enumerate(ordered_triangles):
+                a, b, c = triangle_sc_3_3
+                triangle_average_world_position_3 = get_average_position_of_triangle(triangle_wc_3_3)
+                triangle_average_world_position_screen_position_3 = Polygon3D.convert_world_coord_to_screen_coord(triangle_average_world_position_3, self.camera_3d.get_camera_matrix_4_4())
+                triangle_distance_to_camera = distance_from_triangle_to_camera(triangle_wc_3_3, self.camera_3d.get_position())
+                pygui.begin("Test")
+                pygui.slider_float3(f"Tri {i}", [pygui.Float(p) for p in triangle_average_world_position_3], 0, 1000)
+                pygui.same_line()
+                pygui.text(f"Dist: {triangle_distance_to_camera}")
+                pygui.end()
+                col = pygui.Vec4(
+                    ((i * 60)  % 255) / 255,
+                    ((i * 40) % 255) / 255,
+                    ((i * 25)  % 255) / 255,
+                    1
+                ).to_u32()
+                draw_list.add_text(
+                    origin + map_from_top_corner_to_screen(*triangle_average_world_position_screen_position_3[:2]),
+                    col,
+                    "{}".format(triangle_distance_to_camera)
+                )
+                draw_list.add_circle(
+                    origin + map_from_top_corner_to_screen(*triangle_average_world_position_screen_position_3[:2]),
+                    2,
+                    col,
+                )
+                draw_list.add_triangle(
+                    origin + map_from_top_corner_to_screen(*a[:2]),
+                    origin + map_from_top_corner_to_screen(*b[:2]),
+                    origin + map_from_top_corner_to_screen(*c[:2]),
+                    col,
+                )
+            # ordered_triangles = sort_triangles_by_distance_to_camera(
+            #     cube_screen_coords_triangles,
+            #     cube_world_coords_triangles,
+            #     self.camera.get_position()
+            # )
+            # draw_list.add_triangle(
+            #     origin + map_from_top_corner_to_screen(cube_points[i][0],   cube_points[i][1]),
+            #     origin + map_from_top_corner_to_screen(cube_points[i+1][0], cube_points[i+1][1]),
+            #     origin + map_from_top_corner_to_screen(cube_points[i+2][0], cube_points[i+2][1]),
+            #     pygui.Vec4(
+            #         ((i * 60)  % 255) / 255,
+            #         ((i * 40) % 255) / 255,
+            #         ((i * 25)  % 255) / 255,
+            #         1
+            #     ).to_u32()
+            # )
+
+            # for i, (a, b, c) in enumerate(ordered_triangles):
+                # draw_list.add_text(
+                #     origin + map_from_top_corner_to_screen(tri_position[0], tri_position[1]),
+                #     pygui.Vec4(
+                #         ((i * 60)  % 255) / 255,
+                #         ((i * 40) % 255) / 255,
+                #         ((i * 25)  % 255) / 255,
+                #         1
+                #     ).to_u32(),
+                #     "{}".format(squared_dist(tri_position, self.camera_3d.get_position()))
+                # )
+                # draw_list.add_circle(
+                #     origin + map_from_top_corner_to_screen(tri_position[0], tri_position[1]),
+                #     2,
+                #     pygui.Vec4(
+                #         ((i * 60)  % 255) / 255,
+                #         ((i * 40) % 255) / 255,
+                #         ((i * 25)  % 255) / 255,
+                #         1
+                #     ).to_u32(),
+                # )
+                # draw_list.add_triangle_filled(
+                #     origin + map_from_top_corner_to_screen(a[0], a[1]),
+                #     origin + map_from_top_corner_to_screen(b[0], b[1]),
+                #     origin + map_from_top_corner_to_screen(c[0], c[1]),
+                #     pygui.Vec4(
+                #         ((i * 60)  % 255) / 255,
+                #         ((i * 40) % 255) / 255,
+                #         ((i * 25)  % 255) / 255,
+                #         1
+                #     ).to_u32()
+                # )
+                pass
+            
+            
+            points = self.line_3d_x.get_vtx_screen_coords(self.camera_3d.get_camera_matrix_4_4(), self.camera_3d.get_near_plane())
+            if len(points) == 2:
+                start, end = points
+                draw_list.add_line(
+                    origin + map_from_top_corner_to_screen(start[0], start[1]),
+                    origin + map_from_top_corner_to_screen(end[0], end[1]),
+                    pygui.Vec4(1, 0, 0, 1).to_u32(),
+                    thickness=5,
+                )
+
+            points = self.line_3d_y.get_vtx_screen_coords(self.camera_3d.get_camera_matrix_4_4(), self.camera_3d.get_near_plane())
+            if len(points) == 2:
+                start, end = points
+                draw_list.add_line(
+                    origin + map_from_top_corner_to_screen(start[0], start[1]),
+                    origin + map_from_top_corner_to_screen(end[0], end[1]),
+                    pygui.Vec4(0, 1, 0, 1).to_u32(),
+                    thickness=5,
+                )
+
+            points = self.line_3d_z.get_vtx_screen_coords(self.camera_3d.get_camera_matrix_4_4(), self.camera_3d.get_near_plane())
+            if len(points) == 2:
+                start, end = points
+                draw_list.add_line(
+                    origin + map_from_top_corner_to_screen(start[0], start[1]),
+                    origin + map_from_top_corner_to_screen(end[0], end[1]),
+                    pygui.Vec4(0, 0, 1, 1).to_u32(),
+                    thickness=5,
+                )
             
 
                 # draw_list.add_triangle(
@@ -283,7 +409,7 @@ class Game:
                 pygui.tree_pop()
             
             if pygui.tree_node("Cube3D"):
-                for i, point in enumerate(self.cube_3d.convert_to_screen_coordinates(self.camera_3d.get_camera_matrix_4_4())):
+                for i, point in enumerate(self.cube_3d.get_vtx_screen_coords(self.camera_3d.get_camera_matrix_4_4(), self.camera_3d.get_near_plane())):
                     x, y, z = point
                     x = (x + 1) * self.sandbox_size.x / 2
                     y = (1 - y) * self.sandbox_size.y / 2

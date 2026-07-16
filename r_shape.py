@@ -132,15 +132,50 @@ class Camera2D:
 
 class Shape3D:
     """
-    All a shape requires to be defined are a position, and the points (relative
-    to that position that make up the shape. This should be in game coordinates).
-    You can do some maths to translate this into the respective shape.
+    A shape is a 3D object that contains a position
     """
-    def __init__(self, position_3: np.ndarray, shape_triangles_3: np.ndarray):
+    def __init__(self, world_position_3: np.ndarray):
+        self._world_position_3 = world_position_3
+
+
+class Polygon3D:
+    """
+    A polygon is a set of triangles that make up a shape.
+    """
+    def __init__(self, position_3: np.ndarray, shape_local_coords_3_n: np.ndarray):
         self._position_4 = np.array([position_3[0], position_3[1], position_3[2], 1])
-        self._shape_points_3 = shape_triangles_3
+        self._shape_local_coords_3_n = shape_local_coords_3_n
+
+    @staticmethod
+    def group_into_triangles(points_3_n: np.ndarray):
+        """Returns the list of points as a 3 x n list of triangles"""
+        return np.array([np.array(
+            [points_3_n[i], points_3_n[i+1], points_3_n[i+2]]) for i in range(0, len(points_3_n), 3)]
+        )
     
-    def convert_to_screen_coordinates(self, camera_matrix_4_4: np.ndarray):
+    @staticmethod
+    def convert_world_coord_to_screen_coord(world_coord_3: np.ndarray, camera_matrix_4_4: np.ndarray):
+        """Returns the list of points as a 3 x n list of triangles"""
+        point = np.array([world_coord_3[0], world_coord_3[1], world_coord_3[2], 1])
+        # Perspective shifting
+        transformed = camera_matrix_4_4 @ point
+
+        w = transformed[3]
+        if abs(w) > 1e-8:
+            transformed = transformed[:3] / w
+        else:
+            transformed = transformed[:3]
+
+        # Homogenous point
+        return transformed[:2]
+
+    def get_position(self) -> np.ndarray:
+        return np.array(self._position_4[:3])
+    
+    def get_vtx_world_coords(self) -> np.ndarray:
+        return np.array(self._shape_local_coords_3_n) + self.get_position()
+
+    def get_vtx_screen_coords(self, camera_matrix_4_4: np.ndarray, camera_near_plane: float) -> np.ndarray:
         """
         This applies the correct order of matrix multiplications to return the
         points projected to the camera/screen. i.e. The camera is fake. The
@@ -155,23 +190,27 @@ class Shape3D:
             [0, 0, 0, 1]
         ])
 
-        for x, y, z in self._shape_points_3:
+        for x, y, z in self._shape_local_coords_3_n:
             # Homogenous point
             point = np.array([x, y, z, 1])
             # Matrix multiplication order matters
             transformed = camera_matrix_4_4 @ shape_t_matrix @ point
-            
+
+            # Perspective shifting
             w = transformed[3]
             if abs(w) > 1e-8:
                 transformed = transformed[:3] / w
             else:
                 transformed = transformed[:3]
-            new_points.append(transformed)
+            
+            vertexes_visible = transformed > camera_near_plane
+            if all(vertexes_visible):
+                new_points.append(transformed)
 
         return np.array(new_points)
 
 
-class Triangle3D(Shape3D):
+class Triangle3D(Polygon3D):
     def __init__(self, position_3: np.ndarray):
         super().__init__(position_3, np.array([
             [0, 0, 0],
@@ -180,12 +219,12 @@ class Triangle3D(Shape3D):
         ]))
 
 
-class Line3D(Shape3D):
+class Line3D(Polygon3D):
     def __init__(self, position_3: np.ndarray, shape_points: np.ndarray):
         super().__init__(position_3, shape_points)
 
 
-class Cube3D(Shape3D):
+class Cube3D(Polygon3D):
     def __init__(self, position_3: np.ndarray, size: float):
         super().__init__(position_3, np.array([
             [0,    0,    0],
@@ -249,9 +288,12 @@ class Camera3D:
         # TODO
         pass
 
-    def __init__(self, position_3: np.ndarray, fov: float=90):
+    def __init__(self, position_3: np.ndarray, fov: float=90, near_plane: float=0.1):
         self._position_3 = position_3
         self._fov_degrees = fov
+        self._yaw = np.rad2deg(0)
+        self._pitch = np.rad2deg(0)
+        self._near_plane = near_plane
     
     def get_position(self):
         """Returns a shallow copy of the position"""
@@ -266,11 +308,21 @@ class Camera3D:
     def set_fov(self, fov_degrees: float):
         self._fov_degrees = fov_degrees
 
-    def update_matrices(self):
+    def get_rotation_degrees(self):
+        return np.rad2deg(self._yaw), np.rad2deg(self._pitch)
+
+    def set_rotation_degrees(self, yaw_degrees, pitch_degrees):
+        self._yaw = np.deg2rad(yaw_degrees)
+        self._pitch = np.deg2rad(pitch_degrees)
+
+    def get_near_plane(self):
+        return self._near_plane
+
+    def update_matrices(self, canvas_size_2: np.ndarray):
         self._projection_matrix_4_4 = Camera3D.perspective_projection(
             fov_deg=self._fov_degrees,
-            aspect=1200 / 800,
-            near=0.1,
+            aspect=canvas_size_2[0] / canvas_size_2[1],
+            near=self._near_plane,
             far=1000
         )
         # Moving the camera left, is effectively moving everything right. Hence
@@ -283,7 +335,26 @@ class Camera3D:
         ])
 
         # Add rotation here in the future
-        self._view_matrix_4_4 = translation_matrix
+        c = np.cos(-self._yaw)
+        s = np.sin(-self._yaw)
+        yaw = np.array([
+            [ c, 0, s, 0],
+            [ 0, 1, 0, 0],
+            [-s, 0, c, 0],
+            [ 0, 0, 0, 1]
+        ])
+        
+        c = np.cos(-self._pitch)
+        s = np.sin(-self._pitch)
+        pitch = np.array([
+            [1, 0, 0, 0],
+            [0, c,-s, 0],
+            [0, s, c, 0],
+            [0, 0, 0, 1]
+        ])
+        rotation = pitch @ yaw
+
+        self._view_matrix_4_4 = rotation @ translation_matrix
 
     def get_camera_matrix_4_4(self):
         """

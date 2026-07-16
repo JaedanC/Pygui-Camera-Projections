@@ -130,147 +130,6 @@ class Camera2D:
         ) @ np.array([screen_2[0], screen_2[1], 1]))[:2]
 
 
-class Shape3D:
-    """
-    A shape is a 3D object that contains a position
-    """
-    def __init__(self, world_position_3: np.ndarray):
-        self._world_position_3 = world_position_3
-
-
-class Polygon3D:
-    """
-    A polygon is a set of triangles that make up a shape.
-    """
-    def __init__(self, position_3: np.ndarray, shape_local_coords_3_n: np.ndarray):
-        self._position_4 = np.array([position_3[0], position_3[1], position_3[2], 1])
-        self._shape_local_coords_3_n = shape_local_coords_3_n
-
-    @staticmethod
-    def group_into_triangles(points_3_n: np.ndarray):
-        """Returns the list of points as a 3 x n list of triangles"""
-        return np.array([np.array(
-            [points_3_n[i], points_3_n[i+1], points_3_n[i+2]]) for i in range(0, len(points_3_n), 3)]
-        )
-    
-    @staticmethod
-    def convert_world_coord_to_screen_coord(world_coord_3: np.ndarray, camera_matrix_4_4: np.ndarray):
-        """Returns the list of points as a 3 x n list of triangles"""
-        point = np.array([world_coord_3[0], world_coord_3[1], world_coord_3[2], 1])
-        # Perspective shifting
-        transformed = camera_matrix_4_4 @ point
-
-        w = transformed[3]
-        if abs(w) > 1e-8:
-            transformed = transformed[:3] / w
-        else:
-            transformed = transformed[:3]
-
-        # Homogenous point
-        return transformed[:2]
-
-    def get_position(self) -> np.ndarray:
-        return np.array(self._position_4[:3])
-    
-    def get_vtx_world_coords(self) -> np.ndarray:
-        return np.array(self._shape_local_coords_3_n) + self.get_position()
-
-    def get_vtx_screen_coords(self, camera_matrix_4_4: np.ndarray, camera_near_plane: float) -> np.ndarray:
-        """
-        This applies the correct order of matrix multiplications to return the
-        points projected to the camera/screen. i.e. The camera is fake. The
-        world moves!
-        """
-        new_points = []
-
-        shape_t_matrix = np.array([
-            [1, 0, 0, self._position_4[0]],
-            [0, 1, 0, self._position_4[1]],
-            [0, 0, 1, self._position_4[2]],
-            [0, 0, 0, 1]
-        ])
-
-        for x, y, z in self._shape_local_coords_3_n:
-            # Homogenous point
-            point = np.array([x, y, z, 1])
-            # Matrix multiplication order matters
-            transformed = camera_matrix_4_4 @ shape_t_matrix @ point
-
-            # Perspective shifting
-            w = transformed[3]
-            if abs(w) > 1e-8:
-                transformed = transformed[:3] / w
-            else:
-                transformed = transformed[:3]
-            
-            vertexes_visible = transformed > camera_near_plane
-            if all(vertexes_visible):
-                new_points.append(transformed)
-
-        return np.array(new_points)
-
-
-class Triangle3D(Polygon3D):
-    def __init__(self, position_3: np.ndarray):
-        super().__init__(position_3, np.array([
-            [0, 0, 0],
-            [0, 50, 0],
-            [50, 0, 0]
-        ]))
-
-
-class Line3D(Polygon3D):
-    def __init__(self, position_3: np.ndarray, shape_points: np.ndarray):
-        super().__init__(position_3, shape_points)
-
-
-class Cube3D(Polygon3D):
-    def __init__(self, position_3: np.ndarray, size: float):
-        super().__init__(position_3, np.array([
-            [0,    0,    0],
-            [0,    size, 0],
-            [size, 0,    0],
-            [size, 0,    0],
-            [0,    size, 0],
-            [size, size, 0],
-
-            [0,    0,    size],
-            [0,    size, size],
-            [size, 0,    size],
-            [size, 0,    size],
-            [0,    size, size],
-            [size, size, size],
-
-            [0,    0,    0],
-            [0,    0,    size],
-            [size, 0,    0],
-            [size, 0,    0],
-            [0,    0,    size],
-            [size, 0,    size],
-
-            [0,    size, 0],
-            [0,    size, size],
-            [size, size, 0],
-            [size, size, 0],
-            [0,    size, size],
-            [size, size, size],
-
-            [0,    0,    0],
-            [0,    0,    size],
-            [0,    size, 0],
-            [0,    size, 0],
-            [0,    0,    size],
-            [0,    size, size],
-
-            [size, 0,    0],
-            [size, 0,    size],
-            [size, size, 0],
-            [size, size, 0],
-            [size, 0,    size],
-            [size, size, size],
-        ]))
-
-
 class Camera3D:
     @staticmethod
     def perspective_projection(fov_deg: float, aspect: float, near: float, far: float):
@@ -295,11 +154,11 @@ class Camera3D:
         self._pitch = np.rad2deg(0)
         self._near_plane = near_plane
     
-    def get_position(self):
+    def get_position_3(self):
         """Returns a shallow copy of the position"""
         return self._position_3.copy()
     
-    def set_position(self, position_3: np.ndarray):
+    def set_position_3(self, position_3: np.ndarray):
         self._position_3 = position_3
     
     def get_fov(self):
@@ -355,13 +214,158 @@ class Camera3D:
         rotation = pitch @ yaw
 
         self._view_matrix_4_4 = rotation @ translation_matrix
+        self._camera_matrix_4_4 = self._projection_matrix_4_4 @ self._view_matrix_4_4
 
     def get_camera_matrix_4_4(self):
         """
         Returns the matrix to convert a coordinate from game coords to
         camera/draw coords.
         """
-        return self._projection_matrix_4_4 @ self._view_matrix_4_4
+        return self._camera_matrix_4_4
+
+
+class Shape3D:
+    """
+    A shape is a 3D object that contains a position
+    """
+    def __init__(self, world_position_3: np.ndarray, vertexes_3_3_n: np.ndarray):
+        assert world_position_3.shape[0] == 3
+        self._world_position_3 = world_position_3
+        self._vertexes_3_3_n = vertexes_3_3_n
+    
+    @staticmethod
+    def convert_world_position_to_screen_position(world_position_3: np.ndarray, camera: Camera3D):
+        """Returns the list of points as a 3 x n list of triangles"""
+        assert isinstance(camera, Camera3D)
+
+        homogenous_world_position = np.array(
+            [world_position_3[0], world_position_3[1], world_position_3[2], 1]
+        )
+        
+        homogenous_screen_position_no_projection = camera.get_camera_matrix_4_4() @ homogenous_world_position
+
+        # w is the projection depth.
+        # All components should be divided by w
+        w = homogenous_screen_position_no_projection[3]
+        if abs(w) > 1e-8:
+            homogenous_screen_position = homogenous_screen_position_no_projection[:3] / w
+        else:
+            homogenous_screen_position = homogenous_screen_position_no_projection[:3]
+
+        return homogenous_screen_position[:2]
+    
+    def get_position_3(self) -> np.ndarray:
+        return self._world_position_3.copy()
+    
+    def get_vertex_local_position_3_3_n(self) -> np.ndarray:
+        return self._vertexes_3_3_n
+
+    def get_vertex_world_position_3_3_n(self) -> np.ndarray:
+        return self._vertexes_3_3_n + self._world_position_3
+
+    def get_vertex_screen_positions_n_n(self, camera: Camera3D) -> np.ndarray:
+        """
+        This applies the correct order of matrix multiplications to return the
+        points projected to the camera/screen. i.e. The camera is fake. The
+        world moves!
+        """
+        assert isinstance(camera, Camera3D)
+        shape_t_matrix = np.array([
+            [1, 0, 0, self._world_position_3[0]],
+            [0, 1, 0, self._world_position_3[1]],
+            [0, 0, 1, self._world_position_3[2]],
+            [0, 0, 0, 1]
+        ])
+
+        old_shape = self._vertexes_3_3_n.shape
+
+        vertexes = []
+        # local_vertexes_3_n = self._vertexes_3_3_n.copy()
+        # local_vertexes_view_3_n = local_vertexes_3_n.ravel().reshape(-1, 3)
+        camera_matrix_4_4 = camera.get_camera_matrix_4_4()
+
+        for local_vertex_3 in self._vertexes_3_3_n.flatten().reshape(-1, 3):
+            local_vertex_3: np.ndarray
+            x, y, z = local_vertex_3
+            point = np.array([x, y, z, 1])
+
+            # Matrix multiplication order matters
+            vertex_screen_position_no_projection = camera_matrix_4_4 @ shape_t_matrix @ point
+
+            # Perspective shifting
+            w = vertex_screen_position_no_projection[3]
+            if abs(w) > 1e-8:
+                vertex_screen_position = vertex_screen_position_no_projection[:3] / w
+            else:
+                vertex_screen_position = vertex_screen_position_no_projection[:3]
+            
+            vertexes.append(vertex_screen_position)
+        return np.array(vertexes).reshape(old_shape)
+
+
+class Polygon3D(Shape3D):
+    """
+    A polygon is a set of triangles that make up a shape.
+    """
+    def __init__(self, position_3: np.ndarray, triangles_3_3_n: np.ndarray):
+        assert triangles_3_3_n.shape[1] == 3
+        assert triangles_3_3_n.shape[2] == 3
+        super().__init__(position_3, triangles_3_3_n)
+
+
+class Line3D(Shape3D):
+    def __init__(self, start_world_position_3: np.ndarray, end_world_position_3):
+        position = end_world_position_3 - start_world_position_3
+        super().__init__(position, np.array([start_world_position_3 - position, end_world_position_3 - position]))
+
+
+class Cube3D(Polygon3D):
+    def __init__(self, position_3: np.ndarray, size: float):
+        vertices = np.array([
+            [0,    0,    0],
+            [0,    size, 0],
+            [size, 0,    0],
+            [size, 0,    0],
+            [0,    size, 0],
+            [size, size, 0],
+
+            [0,    0,    size],
+            [0,    size, size],
+            [size, 0,    size],
+            [size, 0,    size],
+            [0,    size, size],
+            [size, size, size],
+
+            [0,    0,    0],
+            [0,    0,    size],
+            [size, 0,    0],
+            [size, 0,    0],
+            [0,    0,    size],
+            [size, 0,    size],
+
+            [0,    size, 0],
+            [0,    size, size],
+            [size, size, 0],
+            [size, size, 0],
+            [0,    size, size],
+            [size, size, size],
+
+            [0,    0,    0],
+            [0,    0,    size],
+            [0,    size, 0],
+            [0,    size, 0],
+            [0,    0,    size],
+            [0,    size, size],
+
+            [size, 0,    0],
+            [size, 0,    size],
+            [size, size, 0],
+            [size, size, 0],
+            [size, 0,    size],
+            [size, size, size],
+        ])
+        # 12 Triangles, 3 vertexes each, 3 components
+        super().__init__(position_3, vertices.reshape(12, 3, 3))
 
 
 def main():

@@ -67,9 +67,7 @@ def main():
     glfw.swap_interval(int(vsync_enabled.value))
 
     # Setup imgui
-    main_context = pygui.create_context()
-    game_content = pygui.create_context()
-    pygui.set_current_context(main_context)
+    pygui.create_context()
 
     # Setup config flags
     io = pygui.get_io()

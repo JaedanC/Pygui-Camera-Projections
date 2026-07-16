@@ -375,14 +375,15 @@ class Game:
             
             if pygui.tree_node("WorldSpawn"):
                 for drawable in self.worldspawn.tree:
-                    for i, screen_position in drawable.get_shape().get_vertex_screen_positions_n_n(self.camera_3d).reshape(-1, 3):
-                        pixel_position = convert_screen_position_2_to_pixel_position_2(screen_position, np.array(self.sandbox_size.tuple()))
-                        pygui.slider_float3(f"Point {i}", [pygui.Float(c) for c in pixel_position], 0, 1000)
+                    if isinstance(drawable, Py3dCube):
+                        for i, screen_position in enumerate(drawable.get_shape().get_vertex_screen_positions_n_n(self.camera_3d).reshape(-1, 3)):
+                            pixel_position = convert_screen_position_2_to_pixel_position_2(screen_position[:2], np.array(self.sandbox_size.tuple()))
+                            pygui.slider_float2(f"Point {i}", [pygui.Float(c) for c in pixel_position], 0, 1000)
                     
                     if isinstance(drawable, Py3dCube):
                         for i, screen_position in enumerate(drawable.get_shape().get_visible_triangle_screen_positions_n_n(self.camera_3d).reshape(-1, 3)):
-                            pixel_position = convert_screen_position_2_to_pixel_position_2(screen_position, np.array(self.sandbox_size.tuple()))
-                            pygui.slider_float3(f"Vis Point {i}", [pygui.Float(c) for c in pixel_position], 0, 1000)
+                            pixel_position = convert_screen_position_2_to_pixel_position_2(screen_position[:2], np.array(self.sandbox_size.tuple()))
+                            pygui.slider_float2(f"Vis Point {i}", [pygui.Float(c) for c in pixel_position], 0, 1000)
 
                 pygui.tree_pop()
             
